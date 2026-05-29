@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { 
   UploadCloud, FileSpreadsheet, Clock, Loader2, Database, 
   Activity, CheckCircle2, ChevronRight, Settings2, Zap, 
@@ -23,6 +23,11 @@ export default function App() {
   const [uploadProgress, setUploadProgress] = useState(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // --- Dynamic Training Console State ---
+  const [trainingLogs, setTrainingLogs] = useState<string[]>([]);
+  const [trainingProgress, setTrainingProgress] = useState(0);
+  const logsEndRef = useRef<HTMLDivElement>(null);
+
   // --- ML Configuration State (Phase 3) ---
   const [targetColumn, setTargetColumn] = useState('');
   const [engineMode, setEngineMode] = useState<'standard' | 'timeseries'>('standard');
@@ -41,6 +46,13 @@ export default function App() {
   const [selectedAlgos, setSelectedAlgos] = useState({ 
     xgboost: true, lightgbm: true, random_forest: true, svm: false, logistic: true 
   });
+
+  // Auto-scroll terminal when logs update
+  useEffect(() => {
+    if (logsEndRef.current) {
+      logsEndRef.current.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [trainingLogs]);
 
   // ==========================================
   // HANDLERS
@@ -73,7 +85,6 @@ export default function App() {
       toast.success('Dataset analyzed successfully!');
       setSessionData(response.data);
       
-      // Auto-initialize imputation strategies
       const initialImputations: Record<string, string> = {};
       response.data.eda.missing_summary.forEach((col: any) => {
         initialImputations[col.column] = col.dtype.includes('float') || col.dtype.includes('int') ? 'median' : 'mode';
@@ -129,8 +140,38 @@ export default function App() {
     if (engineMode === 'timeseries' && !timestampColumn) return toast.error("Time-Series mode requires a timestamp column.");
     
     setIsTraining(true);
-    toast.success("AutoML Engine Initialized. Training models...");
-    
+    setTrainingProgress(5);
+    setTrainingLogs(['[SYSTEM] Initializing KyD.ai Engine...']);
+
+    // --- DYNAMIC FAKE CONSOLE STREAMER ---
+    const steps = [
+      `[DATA] Validating target column: ${targetColumn}`,
+      `[PREP] Dropping columns: ${droppedColumns.length > 0 ? droppedColumns.join(', ') : 'None'}`,
+      `[PREP] Applying imputation strategies to missing data...`,
+      `[SPLIT] Performing 80/20 train-test split...`,
+      `[PREP] Encoding categorical text strings...`
+    ];
+
+    Object.entries(selectedAlgos).forEach(([key, isSelected]) => {
+      if (isSelected) steps.push(`[ML] Training ${key.replace('_', ' ').toUpperCase()} model...`);
+    });
+
+    steps.push('[EVAL] Computing cross-validation accuracy & F1 scores...');
+    steps.push('[EXPORT] Serializing .joblib model weights...');
+    steps.push('[EXPORT] Generating Jupyter Notebook artifacts...');
+
+    let currentStep = 0;
+    const logInterval = setInterval(() => {
+      if (currentStep < steps.length) {
+        setTrainingLogs(prev => [...prev, steps[currentStep]]);
+        setTrainingProgress(prev => Math.min(95, prev + (90 / steps.length)));
+        currentStep++;
+      } else {
+        setTrainingLogs(prev => [...prev, '[SYSTEM] Optimizing final hyperparameters (Please wait)...']);
+        clearInterval(logInterval);
+      }
+    }, 1200);
+
     try {
       const response = await axios.post('http://localhost:8000/api/train', {
         dataset_id: sessionData.dataset_id, 
@@ -142,15 +183,25 @@ export default function App() {
         imputation_strategy: imputationStrategy 
       });
       
-      setLeaderboardData(response.data.leaderboard);
-      setNotebookUrl(response.data.notebook_download_url);
-      setAppPhase(4); 
-      toast.success("Training complete!");
+      clearInterval(logInterval);
+      setTrainingLogs(prev => [...prev, '[SUCCESS] Pipeline Complete! Redirecting to dashboard...']);
+      setTrainingProgress(100);
+      
+      // Add a slight delay so the user can see the 100% completion
+      setTimeout(() => {
+        setLeaderboardData(response.data.leaderboard);
+        setNotebookUrl(response.data.notebook_download_url);
+        setAppPhase(4); 
+        setIsTraining(false);
+        setTrainingLogs([]);
+      }, 800);
+
     } catch (error: any) { 
-      toast.error(error.response?.data?.detail || 'Training failed'); 
-    } finally { 
-      setIsTraining(false); 
-    }
+      clearInterval(logInterval);
+      setTrainingLogs(prev => [...prev, `[ERROR] ${error.response?.data?.detail || 'Training failed'}`]);
+      toast.error('Training failed. See console.');
+      setTimeout(() => setIsTraining(false), 3000);
+    } 
   };
 
   const getCorrelationColor = (val: number) => {
@@ -204,11 +255,15 @@ export default function App() {
 
   return (
     <>
-      {/* GLOBAL FONT INJECTION */}
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap');
         .font-sans { font-family: 'Inter', sans-serif; }
         .font-mono { font-family: 'JetBrains Mono', monospace; }
+        
+        /* Custom scrollbar for terminal */
+        .terminal-scroll::-webkit-scrollbar { width: 6px; }
+        .terminal-scroll::-webkit-scrollbar-track { background: transparent; }
+        .terminal-scroll::-webkit-scrollbar-thumb { background: #333; border-radius: 10px; }
       `}</style>
 
       <div className="font-sans antialiased text-text-primary bg-background-primary min-h-screen">
@@ -345,11 +400,48 @@ export default function App() {
           <div className="flex flex-col items-center pt-16 px-4 pb-24 relative">
             <div className="w-full max-w-4xl">
               
+              {/* DYNAMIC EXECUTION CONSOLE OVERLAY */}
               {isTraining && (
-                <div className="fixed inset-0 z-50 bg-background-primary/90 backdrop-blur-sm flex flex-col items-center justify-center">
-                  <Loader2 size={64} className="animate-spin text-accent-primary mb-6" />
-                  <h2 className="text-2xl font-bold mb-2 tracking-tight">Training ML Pipeline...</h2>
-                  <p className="text-text-secondary font-mono">Executing preprocessing & optimizing algorithms</p>
+                <div className="fixed inset-0 z-50 bg-background-primary/95 backdrop-blur-md flex flex-col items-center justify-center p-4">
+                  <div className="w-full max-w-3xl flex flex-col items-center">
+                    <Loader2 size={48} className="animate-spin text-accent-primary mb-6" />
+                    <h2 className="text-3xl font-bold mb-2 tracking-tight text-white">Compiling Pipeline</h2>
+                    <p className="text-text-secondary mb-12">Please wait while the engine executes your configurations.</p>
+                    
+                    {/* The Terminal Window */}
+                    <div className="w-full bg-[#0D0D12] border border-border-subtle rounded-xl overflow-hidden shadow-2xl">
+                      {/* Mac-style header */}
+                      <div className="bg-[#1A1A24] px-4 py-3 flex items-center gap-2 border-b border-border-subtle">
+                        <div className="w-3 h-3 rounded-full bg-red-500/80"></div>
+                        <div className="w-3 h-3 rounded-full bg-amber-500/80"></div>
+                        <div className="w-3 h-3 rounded-full bg-green-500/80"></div>
+                        <span className="ml-4 text-xs font-mono text-text-muted">kyd-ai-execution-engine ~ bash</span>
+                      </div>
+                      
+                      {/* Terminal Output */}
+                      <div className="p-6 h-64 overflow-y-auto terminal-scroll font-mono text-sm leading-relaxed text-indigo-300">
+                        {trainingLogs.map((log, i) => (
+                          <div key={i} className="mb-2 flex items-start gap-3">
+                            <span className="text-text-muted opacity-50 select-none">&gt;</span>
+                            <span className={log.includes('[ERROR]') ? 'text-red-400' : log.includes('[SUCCESS]') ? 'text-green-400 font-bold' : ''}>
+                              {log}
+                            </span>
+                          </div>
+                        ))}
+                        {/* Blinking cursor */}
+                        <div className="animate-pulse w-2 h-4 bg-indigo-500 mt-2 ml-6"></div>
+                        <div ref={logsEndRef} />
+                      </div>
+
+                      {/* Progress Bar */}
+                      <div className="h-1.5 w-full bg-[#1A1A24]">
+                        <div 
+                          className="h-full bg-accent-primary transition-all duration-500 ease-out shadow-[0_0_10px_rgba(99,102,241,0.8)]"
+                          style={{ width: `${trainingProgress}%` }}
+                        />
+                      </div>
+                    </div>
+                  </div>
                 </div>
               )}
               
@@ -705,6 +797,63 @@ export default function App() {
               </div>
 
               {/* Correlation Matrix */}
+              {sessionData.eda.correlation_matrix?.columns && sessionData.eda.correlation_matrix.columns.length > 0 && (
+                <div className="mb-8">
+                  <h3 className="text-lg font-bold mb-4 flex items-center gap-2 tracking-tight">
+                    <Network size={18} className="text-accent-primary"/> Feature Correlation Matrix
+                  </h3>
+                  <div className="p-6 rounded-xl border border-border-subtle bg-background-surface overflow-x-auto">
+                    <div className="flex items-start justify-between mb-4">
+                      <p className="text-sm text-text-secondary">
+                        Visual map of linear relationships. <span className="text-indigo-400 font-medium">Blue = Positive</span>, <span className="text-red-400 font-medium">Red = Negative</span>.
+                      </p>
+                      <p className="text-xs text-accent-warning flex items-center gap-1"><Info size={14}/> Highlighted cells (|r| &gt; 0.85) indicate potential multi-collinearity.</p>
+                    </div>
+                    
+                    <div className="inline-block min-w-full">
+                      <table className="border-collapse text-xs font-mono">
+                        <thead>
+                          <tr>
+                            <th className="p-2 border border-border-subtle"></th>
+                            {sessionData.eda.correlation_matrix.columns.map((col: string) => (
+                              <th key={`head-${col}`} className="p-2 border border-border-subtle text-text-muted font-normal max-w-[100px] truncate" title={col}>
+                                {col.substring(0, 8)}..
+                              </th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {sessionData.eda.correlation_matrix.values.map((row: number[], i: number) => (
+                            <tr key={`row-${i}`}>
+                              <th className="p-2 border border-border-subtle text-text-muted font-normal text-left max-w-[100px] truncate" title={sessionData.eda.correlation_matrix.columns[i]}>
+                                {sessionData.eda.correlation_matrix.columns[i].substring(0, 10)}..
+                              </th>
+                              {row.map((val: number, j: number) => {
+                                const isHighlyCorrelated = Math.abs(val) > 0.85 && i !== j;
+                                return (
+                                  <td 
+                                    key={`cell-${i}-${j}`} 
+                                    title={`${sessionData.eda.correlation_matrix.columns[i]} ↔ ${sessionData.eda.correlation_matrix.columns[j]}: r = ${val.toFixed(2)}`}
+                                    className={`w-12 h-12 p-0 text-center relative group cursor-crosshair
+                                      ${isHighlyCorrelated ? 'border-2 border-accent-warning z-10 shadow-[0_0_10px_rgba(245,158,11,0.5)]' : 'border border-border-subtle'}
+                                    `}
+                                  >
+                                    <div className={`absolute inset-0 ${getCorrelationColor(val)}`} style={{ opacity: getCorrelationOpacity(val) }}></div>
+                                    <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 bg-background-elevated border border-accent-primary z-20 transition-opacity rounded">
+                                      {val.toFixed(2)}
+                                    </div>
+                                  </td>
+                                )
+                              })}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               <div className="flex justify-end items-center mt-8 pt-6 border-t border-border-subtle">
                 <button 
                   onClick={() => setAppPhase(3)} 
