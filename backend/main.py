@@ -7,6 +7,8 @@ from dotenv import load_dotenv
 from pydantic import BaseModel
 from typing import Dict
 import pandas as pd
+import numpy as np
+import math
 import os
 import uuid
 import time
@@ -24,7 +26,6 @@ from models import Base, Dataset
 # Load environment variables
 load_dotenv()
 
-# Database Setup
 DATABASE_URL = os.getenv("DATABASE_URL")
 if not DATABASE_URL:
     raise ValueError("DATABASE_URL environment variable is missing.")
@@ -49,7 +50,6 @@ engine = create_engine(
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base.metadata.create_all(bind=engine)
 
-# FastAPI Setup
 app = FastAPI(title="KyD.ai API")
 app.add_middleware(
     CORSMiddleware,
@@ -62,13 +62,21 @@ app.add_middleware(
 TEMP_DIR = "temp_uploads"
 os.makedirs(TEMP_DIR, exist_ok=True)
 
+# UPGRADE 1: Tuned Health Score (Harsher penalty for missing data)
 def calculate_health_score(df: pd.DataFrame) -> int:
     missing_pct = df.isnull().sum().sum() / (df.shape[0] * df.shape[1])
     duplicate_pct = df.duplicated().sum() / df.shape[0]
-    score = 100 - (missing_pct * 40) - (duplicate_pct * 20)
+    score = 100 - (missing_pct * 150) - (duplicate_pct * 50)
     return max(0, int(score))
 
-# --- ENDPOINT 1: THE UPLOAD ROUTE ---
+def safe_float(val):
+    try:
+        if pd.isna(val) or val == float('inf') or val == float('-inf'):
+            return None
+        return round(float(val), 2)
+    except Exception:
+        return None
+
 @app.post("/api/upload")
 async def upload_dataset(file: UploadFile = File(...)):
     if not file.filename.endswith('.csv'):
@@ -99,22 +107,73 @@ async def upload_dataset(file: UploadFile = File(...)):
         for col in df.columns if df[col].isnull().any()
     ]
 
+    # UPGRADE 3: AI Smart Insights Generator (Level 5)
+    smart_insights = []
+    if "SibSp" in df.columns and "Parch" in df.columns:
+        smart_insights.append({"type": "feature", "message": "High predictive potential: Combine 'SibSp' and 'Parch' into a single 'FamilySize' feature."})
+    
+    for col in df.columns:
+        if df[col].dtype == 'object' and df[col].nunique() > 30 and df[col].nunique() < rows:
+            smart_insights.append({"type": "warning", "message": f"High Cardinality: '{col}' has {df[col].nunique()} unique strings. Consider extracting prefixes (like titles) or dropping it to prevent overfitting."})
+        elif df[col].isnull().sum() / rows > 0.50:
+            smart_insights.append({"type": "danger", "message": f"Data Sparsity: '{col}' is missing over 50% of its data. Imputation may introduce heavy bias. Consider dropping."})
+
+    column_stats = []
+    for col in df.columns:
+        dtype = str(df[col].dtype)
+        missing_count = int(df[col].isnull().sum())
+        
+        if pd.api.types.is_numeric_dtype(df[col]):
+            clean_series = df[col].dropna()
+            hist_data = []
+            if not clean_series.empty:
+                hist, bin_edges = np.histogram(clean_series, bins=10)
+                hist_data = [{"name": f"{bin_edges[i]:.1f}-{bin_edges[i+1]:.1f}", "count": int(hist[i])} for i in range(len(hist))]
+            
+            # UPGRADE 1: Accurate Min, Max, Kurtosis
+            column_stats.append({
+                "name": col, "type": "numeric", "dtype": dtype, "missing": missing_count,
+                "mean": safe_float(df[col].mean()), 
+                "median": safe_float(df[col].median()),
+                "min": safe_float(df[col].min()),
+                "max": safe_float(df[col].max()),
+                "std": safe_float(df[col].std()), 
+                "skewness": safe_float(df[col].skew()),
+                "kurtosis": safe_float(df[col].kurt()),
+                "chart_data": hist_data
+            })
+        else:
+            top_counts = df[col].value_counts().head(5)
+            bar_data = [{"name": str(k)[:10], "count": int(v)} for k, v in top_counts.items()]
+            column_stats.append({
+                "name": col, "type": "categorical", "dtype": dtype, "missing": missing_count,
+                "unique": int(df[col].nunique()), "chart_data": bar_data
+            })
+
+    numeric_df = df.select_dtypes(include=[np.number])
+    corr_matrix = {}
+    if not numeric_df.empty:
+        corr_df = numeric_df.corr().round(2)
+        corr_matrix = {
+            "columns": corr_df.columns.tolist(),
+            # BUG FIX: fillna() must happen BEFORE .values
+            "values": corr_df.fillna(0).values.tolist() 
+        }
+
     eda_data = {
         "missing_summary": missing_summary,
-        "duplicate_count": int(df.duplicated().sum())
+        "duplicate_count": int(df.duplicated().sum()),
+        "column_stats": column_stats,
+        "correlation_matrix": corr_matrix,
+        "smart_insights": smart_insights # Appended new insights
     }
 
     db = SessionLocal()
     try:
         new_dataset = Dataset(
-            id=file_id,
-            filename=file.filename,
-            file_path=file_path,
-            rows=rows,
-            columns=cols,
-            memory_mb=round(memory_mb, 2),
-            health_score=health_score,
-            eda_json=eda_data
+            id=file_id, filename=file.filename, file_path=file_path,
+            rows=rows, columns=cols, memory_mb=round(memory_mb, 2),
+            health_score=health_score, eda_json=eda_data
         )
         db.add(new_dataset)
         db.commit()
@@ -126,15 +185,76 @@ async def upload_dataset(file: UploadFile = File(...)):
         db.close()
 
     return {
-        "dataset_id": str(new_dataset.id),
-        "filename": new_dataset.filename,
-        "rows": new_dataset.rows,
-        "columns": new_dataset.columns,
-        "column_names": df.columns.tolist(),
-        "memory_mb": new_dataset.memory_mb,
-        "health_score": new_dataset.health_score,
-        "eda": eda_data
+        "dataset_id": str(new_dataset.id), "filename": new_dataset.filename,
+        "rows": new_dataset.rows, "columns": new_dataset.columns,
+        "column_names": df.columns.tolist(), "memory_mb": new_dataset.memory_mb,
+        "health_score": new_dataset.health_score, "eda": eda_data
     }
+
+# UPGRADE 2: Bivariate Analysis Engine (Level 3)
+class BivariatePayload(BaseModel):
+    dataset_id: str
+    target_column: str
+
+@app.post("/api/bivariate")
+async def get_bivariate(payload: BivariatePayload):
+    db = SessionLocal()
+    dataset = db.query(Dataset).filter(Dataset.id == payload.dataset_id).first()
+    db.close()
+    
+    if not dataset:
+        raise HTTPException(status_code=404, detail="Dataset not found.")
+
+    df = pd.read_csv(dataset.file_path)
+    
+    if payload.target_column not in df.columns or df[payload.target_column].nunique() > 10:
+        return {"status": "skipped", "message": "Bivariate stacking currently optimized for classification targets (<=10 classes)."}
+
+    target_cats = [str(x) for x in df[payload.target_column].dropna().unique()]
+    df['__target__'] = df[payload.target_column].astype(str)
+    
+    bivariate_results = {}
+    
+    for col in df.columns:
+        if col == payload.target_column or col == '__target__': continue
+        chart_data = []
+        
+        if pd.api.types.is_numeric_dtype(df[col]) and df[col].nunique() > 10:
+            # Numeric columns: Bin them, then cross-tabulate
+            clean_series = df[col].dropna()
+            if clean_series.empty: continue
+            bins = np.histogram_bin_edges(clean_series, bins=10)
+            df['__temp_bin__'] = pd.cut(df[col], bins=bins, include_lowest=True).astype(str)
+            cross = pd.crosstab(df['__temp_bin__'], df['__target__'])
+            
+            for i in range(len(bins)-1):
+                bin_label = f"({bins[i]:.3g}, {bins[i+1]:.3g}]"
+                # Handle pandas cut interval formatting mapping to our clean labels
+                matching_idx = [idx for idx in cross.index if str(round(bins[i], 1)) in idx or str(round(bins[i+1], 1)) in idx]
+                
+                entry = {"name": f"{bins[i]:.1f}-{bins[i+1]:.1f}"}
+                for tc in target_cats:
+                    val = 0
+                    if matching_idx and tc in cross.columns:
+                        val = int(cross.loc[matching_idx[0], tc])
+                    entry[tc] = val
+                chart_data.append(entry)
+            df.drop(columns=['__temp_bin__'], inplace=True)
+            
+        else:
+            # Categorical columns: Standard cross-tabulation
+            top_cats = df[col].value_counts().head(8).index
+            filtered_df = df[df[col].isin(top_cats)]
+            cross = pd.crosstab(filtered_df[col], filtered_df['__target__'])
+            for cat_val in cross.index:
+                entry = {"name": str(cat_val)[:15]}
+                for tc in target_cats:
+                    entry[tc] = int(cross.loc[cat_val, tc]) if tc in cross.columns else 0
+                chart_data.append(entry)
+                
+        bivariate_results[col] = chart_data
+
+    return {"status": "success", "target_classes": target_cats, "data": bivariate_results}
 
 # --- Pydantic Schema ---
 class TrainPayload(BaseModel):
@@ -209,7 +329,6 @@ async def train_models(payload: TrainPayload):
                 
                 print(f"✅ DONE in {train_time}s (Acc: {acc:.4f})")
                 
-                # NEW: Serialize and save the model to the temp directory
                 model_filename = f"{payload.dataset_id}_{algo_key}.joblib"
                 model_filepath = os.path.join(TEMP_DIR, model_filename)
                 joblib.dump(model, model_filepath)
@@ -250,7 +369,6 @@ async def export_model(filename: str):
     if not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail="Model file not found. It may have expired.")
     
-    # Return the file as a downloadable attachment
     return FileResponse(
         path=file_path, 
         filename=filename, 
