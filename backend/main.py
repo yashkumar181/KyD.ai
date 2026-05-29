@@ -20,7 +20,20 @@ if not DATABASE_URL:
 if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
-engine = create_engine(DATABASE_URL)
+# UPDATED: Robust connection pooling for serverless Neon
+engine = create_engine(
+    DATABASE_URL,
+    pool_pre_ping=True,       # Pings the DB to check if the connection is alive
+    pool_recycle=300,         # Preemptively recycles connections every 5 minutes
+    pool_size=5,              # Keeps the baseline pool small
+    max_overflow=10,          # Allows a few extra connections during traffic spikes
+    connect_args={
+        "keepalives": 1,
+        "keepalives_idle": 30,
+        "keepalives_interval": 10,
+        "keepalives_count": 5,
+    }
+)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 # Create tables if they don't exist
@@ -116,6 +129,7 @@ async def upload_dataset(file: UploadFile = File(...)):
         "filename": new_dataset.filename,
         "rows": new_dataset.rows,
         "columns": new_dataset.columns,
+        "column_names": df.columns.tolist(), # <--- ADD THIS LINE
         "memory_mb": new_dataset.memory_mb,
         "health_score": new_dataset.health_score,
         "eda": eda_data
