@@ -1,9 +1,9 @@
 import { useState, useRef } from 'react';
-import {
-  UploadCloud, FileSpreadsheet, Clock, Loader2, Database,
-  Activity, CheckCircle2, ChevronRight, Settings2, Zap,
-  LayoutList, Target, Play, Trophy, BarChart3, Timer,
-  Download, AlertTriangle, Network, SearchX, Info, Lightbulb, SplitSquareVertical
+import { 
+  UploadCloud, FileSpreadsheet, Clock, Loader2, Database, 
+  Activity, CheckCircle2, ChevronRight, Settings2, Zap, 
+  LayoutList, Target, Play, Trophy, BarChart3, Timer, 
+  Download, AlertTriangle, Network, SearchX, Info, Lightbulb, SplitSquareVertical, Filter
 } from 'lucide-react';
 import axios from 'axios';
 import toast, { Toaster } from 'react-hot-toast';
@@ -13,7 +13,7 @@ export default function App() {
   const [appPhase, setAppPhase] = useState(1);
   const [sessionData, setSessionData] = useState<any>(null);
   const [leaderboardData, setLeaderboardData] = useState<any>(null);
-
+  
   const [isDragging, setIsDragging] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [isTraining, setIsTraining] = useState(false);
@@ -24,8 +24,10 @@ export default function App() {
   const [engineMode, setEngineMode] = useState<'standard' | 'timeseries'>('standard');
   const [timestampColumn, setTimestampColumn] = useState('');
   const [imputationStrategy, setImputationStrategy] = useState<Record<string, string>>({});
-
-  // NEW: Bivariate Analysis State
+  
+  // NEW: State for Dropped Columns
+  const [droppedColumns, setDroppedColumns] = useState<string[]>([]);
+  
   const [edaTarget, setEdaTarget] = useState('');
   const [bivariateData, setBivariateData] = useState<any>(null);
   const [isFetchingBivariate, setIsFetchingBivariate] = useState(false);
@@ -59,14 +61,14 @@ export default function App() {
       });
       toast.success('Dataset analyzed successfully!');
       setSessionData(response.data);
-
+      
       const initialImputations: Record<string, string> = {};
       response.data.eda.missing_summary.forEach((col: any) => {
         initialImputations[col.column] = col.dtype.includes('float') || col.dtype.includes('int') ? 'median' : 'mode';
       });
       setImputationStrategy(initialImputations);
-
-      setAppPhase(2);
+      
+      setAppPhase(2); 
     } catch (error: any) {
       toast.error(error.response?.data?.detail || 'Upload failed');
     } finally {
@@ -74,11 +76,10 @@ export default function App() {
     }
   };
 
-  // NEW: Fetch Bivariate Data when Target is selected in EDA Phase
   const handleEdaTargetSelect = async (selectedTarget: string) => {
     setEdaTarget(selectedTarget);
-    setTargetColumn(selectedTarget); // Sync it with Phase 3 automatically
-
+    setTargetColumn(selectedTarget);
+    
     if (!selectedTarget) {
       setBivariateData(null);
       return;
@@ -90,7 +91,7 @@ export default function App() {
         dataset_id: sessionData.dataset_id,
         target_column: selectedTarget
       });
-
+      
       if (response.data.status === 'success') {
         setBivariateData(response.data);
         toast.success("Bivariate analysis generated!");
@@ -109,10 +110,17 @@ export default function App() {
   const toggleAlgo = (key: keyof typeof selectedAlgos) => setSelectedAlgos(prev => ({ ...prev, [key]: !prev[key] }));
   const handleImputationChange = (colName: string, strategy: string) => setImputationStrategy(prev => ({ ...prev, [colName]: strategy }));
 
+  // NEW: Handler to toggle dropping a column
+  const toggleDropColumn = (col: string) => {
+    setDroppedColumns(prev => 
+      prev.includes(col) ? prev.filter(c => c !== col) : [...prev, col]
+    );
+  };
+
   const handleRunAutoML = async () => {
     if (!targetColumn) return toast.error("Please select a target column to predict.");
     if (engineMode === 'timeseries' && !timestampColumn) return toast.error("Time-Series mode requires a timestamp column.");
-
+    
     setIsTraining(true);
     toast.success("AutoML Engine Initialized. Training models...");
 
@@ -123,9 +131,12 @@ export default function App() {
         engine_mode: engineMode,
         features: selectedFeatures,
         algos: selectedAlgos,
+        // UPGRADE: Sending preprocessing instructions to backend
+        drop_columns: droppedColumns,
+        imputation_strategy: imputationStrategy 
       });
       setLeaderboardData(response.data.leaderboard);
-      setAppPhase(4);
+      setAppPhase(4); 
       toast.success("Training complete!");
     } catch (error: any) {
       toast.error(error.response?.data?.detail || 'Training failed');
@@ -135,22 +146,20 @@ export default function App() {
   };
 
   const getCorrelationColor = (val: number) => {
-    if (val === 1) return 'bg-background-elevated text-text-muted';
-    if (val > 0) return `bg-indigo-500 text-white font-medium`;
-    if (val < 0) return `bg-red-500 text-white font-medium`;
+    if (val === 1) return 'bg-background-elevated text-text-muted'; 
+    if (val > 0) return `bg-indigo-500 text-white font-medium`; 
+    if (val < 0) return `bg-red-500 text-white font-medium`; 
     return 'bg-background-surface text-text-primary';
   };
-
-  const getCorrelationOpacity = (val: number) => Math.max(0.15, Math.abs(val));
-
-  // Palette for stacked charts
+  
+  const getCorrelationOpacity = (val: number) => Math.max(0.15, Math.abs(val)); 
   const CHART_COLORS = ['#ef4444', '#22c55e', '#3b82f6', '#f59e0b', '#8b5cf6', '#ec4899'];
 
   // ==========================================
   // VIEW 4: LEADERBOARD & EXPORT
   // ==========================================
   if (appPhase === 4 && leaderboardData) {
-    const bestModel = leaderboardData[0];
+    const bestModel = leaderboardData[0]; 
     return (
       <div className="min-h-screen flex flex-col items-center pt-16 px-4 pb-24">
         <Toaster position="bottom-center" toastOptions={{ style: { background: '#1a1a1a', color: '#f5f5f5', border: '1px solid #2a2a2a' } }} />
@@ -161,7 +170,7 @@ export default function App() {
           </div>
           <div className="p-8 rounded-xl border-2 border-accent-primary bg-accent-primary/5 mb-8 relative overflow-hidden">
             <div className="absolute top-0 right-0 p-8 opacity-10"><Trophy size={120} /></div>
-            <h3 className="text-accent-primary font-bold tracking-wider text-sm mb-2 uppercase flex items-center gap-2"><Trophy size={16} /> Top Performing Model</h3>
+            <h3 className="text-accent-primary font-bold tracking-wider text-sm mb-2 uppercase flex items-center gap-2"><Trophy size={16}/> Top Performing Model</h3>
             <h1 className="text-4xl font-bold mb-6">{bestModel.name}</h1>
             <div className="flex gap-8 mb-8">
               <div><p className="text-text-secondary text-sm mb-1">Accuracy</p><p className="text-3xl font-mono text-accent-success">{(bestModel.accuracy * 100).toFixed(2)}%</p></div>
@@ -172,7 +181,7 @@ export default function App() {
               <Download size={18} className="group-hover:-translate-y-1 transition-transform" /> Download .joblib Model
             </button>
           </div>
-          <h3 className="text-lg font-medium mb-4 flex items-center gap-2"><BarChart3 size={18} className="text-accent-primary" /> Full Leaderboard</h3>
+          <h3 className="text-lg font-medium mb-4 flex items-center gap-2"><BarChart3 size={18} className="text-accent-primary"/> Full Leaderboard</h3>
           <div className="w-full rounded-xl border border-border-subtle bg-background-surface overflow-hidden">
             <table className="w-full text-left border-collapse">
               <thead>
@@ -181,7 +190,7 @@ export default function App() {
                   <th className="p-4 font-medium text-text-secondary">Algorithm</th>
                   <th className="p-4 font-medium text-text-secondary">Accuracy</th>
                   <th className="p-4 font-medium text-text-secondary">F1 Score</th>
-                  <th className="p-4 font-medium text-text-secondary flex items-center gap-2"><Timer size={16} /> Time</th>
+                  <th className="p-4 font-medium text-text-secondary flex items-center gap-2"><Timer size={16}/> Time</th>
                 </tr>
               </thead>
               <tbody>
@@ -210,12 +219,12 @@ export default function App() {
       <div className="min-h-screen flex flex-col items-center pt-16 px-4 pb-24">
         <Toaster position="bottom-center" toastOptions={{ style: { background: '#1a1a1a', color: '#f5f5f5', border: '1px solid #2a2a2a' } }} />
         <div className="w-full max-w-4xl relative">
-
+          
           {isTraining && (
             <div className="absolute inset-0 z-50 bg-background-primary/80 backdrop-blur-sm flex flex-col items-center justify-center rounded-xl border border-border-subtle">
               <Loader2 size={48} className="animate-spin text-accent-primary mb-4" />
               <h2 className="text-xl font-bold mb-2">Training Models...</h2>
-              <p className="text-text-secondary">Running Machine Learning algorithms on your data.</p>
+              <p className="text-text-secondary">Applying preprocessing and running algorithms.</p>
             </div>
           )}
 
@@ -226,15 +235,37 @@ export default function App() {
 
           <div className="space-y-6">
             <div className="p-6 rounded-xl border border-border-subtle bg-background-surface">
-              <h3 className="text-lg font-medium mb-4 flex items-center gap-2"><Target size={18} className="text-accent-primary" /> 1. Confirm Target Column</h3>
+              <h3 className="text-lg font-medium mb-4 flex items-center gap-2"><Target size={18} className="text-accent-primary"/> 1. Confirm Target Column</h3>
               <select className="w-full p-3 rounded-lg bg-background-primary border border-border-subtle text-text-primary focus:border-accent-primary outline-none" value={targetColumn} onChange={(e) => setTargetColumn(e.target.value)}>
                 <option value="">-- Select a column --</option>
                 {sessionData.column_names?.map((col: string) => <option key={col} value={col}>{col}</option>)}
               </select>
             </div>
 
+            {/* NEW: Drop Columns Section */}
             <div className="p-6 rounded-xl border border-border-subtle bg-background-surface">
-              <h3 className="text-lg font-medium mb-4 flex items-center gap-2"><Settings2 size={18} className="text-accent-primary" /> 2. Choose Engine Mode</h3>
+              <h3 className="text-lg font-medium mb-4 flex items-center gap-2"><Filter size={18} className="text-accent-primary"/> 2. Drop Columns (Feature Selection)</h3>
+              <p className="text-sm text-text-secondary mb-4">Click to explicitly exclude columns from the Machine Learning pipeline (e.g. IDs, names, or redundant data).</p>
+              
+              <div className="flex flex-wrap gap-2">
+                {sessionData.column_names?.filter((c: string) => c !== targetColumn && c !== timestampColumn).map((col: string) => (
+                  <button
+                    key={col}
+                    onClick={() => toggleDropColumn(col)}
+                    className={`px-4 py-2 rounded-lg text-sm border transition-all duration-200 flex items-center gap-2 ${
+                      droppedColumns.includes(col) 
+                      ? 'bg-red-500/10 border-red-500/50 text-red-400' 
+                      : 'bg-background-primary border-border-subtle text-text-muted hover:border-border-active'
+                    }`}
+                  >
+                    {col} {droppedColumns.includes(col) && <SearchX size={14} />}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="p-6 rounded-xl border border-border-subtle bg-background-surface">
+              <h3 className="text-lg font-medium mb-4 flex items-center gap-2"><Settings2 size={18} className="text-accent-primary"/> 3. Choose Engine Mode</h3>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div onClick={() => setEngineMode('standard')} className={`p-4 rounded-lg border-2 cursor-pointer transition-all ${engineMode === 'standard' ? 'border-accent-primary bg-accent-primary/5' : 'border-border-subtle hover:border-border-active'}`}>
                   <h4 className="font-medium mb-1">Standard Mode</h4>
@@ -245,20 +276,11 @@ export default function App() {
                   <p className="text-sm text-text-secondary">Sequential temporal validation.</p>
                 </div>
               </div>
-              {engineMode === 'timeseries' && (
-                <div className="mt-4 p-4 rounded-lg bg-background-primary border border-border-subtle">
-                  <label className="block text-sm font-medium text-text-secondary mb-2">Select Timestamp Column</label>
-                  <select className="w-full p-3 rounded-lg bg-background-surface border border-border-subtle text-text-primary focus:border-accent-primary outline-none" value={timestampColumn} onChange={(e) => setTimestampColumn(e.target.value)}>
-                    <option value="">-- Select timestamp column --</option>
-                    {sessionData.column_names?.map((col: string) => <option key={col} value={col}>{col}</option>)}
-                  </select>
-                </div>
-              )}
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div className="p-6 rounded-xl border border-border-subtle bg-background-surface">
-                <h3 className="text-lg font-medium mb-4 flex items-center gap-2"><Zap size={18} className="text-accent-primary" /> Preprocessing</h3>
+                <h3 className="text-lg font-medium mb-4 flex items-center gap-2"><Zap size={18} className="text-accent-primary"/> Advanced Preprocessing</h3>
                 <div className="space-y-3">
                   {Object.entries(selectedFeatures).map(([key, value]) => (
                     <label key={key} className="flex items-center gap-3 cursor-pointer group" onClick={() => toggleFeature(key as any)}>
@@ -271,7 +293,7 @@ export default function App() {
                 </div>
               </div>
               <div className="p-6 rounded-xl border border-border-subtle bg-background-surface">
-                <h3 className="text-lg font-medium mb-4 flex items-center gap-2"><LayoutList size={18} className="text-accent-primary" /> Algorithms</h3>
+                <h3 className="text-lg font-medium mb-4 flex items-center gap-2"><LayoutList size={18} className="text-accent-primary"/> Algorithms</h3>
                 <div className="space-y-3">
                   {Object.entries(selectedAlgos).map(([key, value]) => (
                     <label key={key} className="flex items-center gap-3 cursor-pointer group" onClick={() => toggleAlgo(key as any)}>
@@ -288,7 +310,7 @@ export default function App() {
             <div className="flex justify-between items-center mt-8 pt-6 border-t border-border-subtle">
               <button onClick={() => setAppPhase(2)} className="px-6 py-3 text-text-secondary hover:text-text-primary transition-colors">Back to EDA</button>
               <button onClick={handleRunAutoML} className="flex items-center gap-2 px-8 py-4 bg-accent-primary hover:bg-indigo-600 text-white rounded-lg font-medium transition-all shadow-[0_0_20px_rgba(99,102,241,0.3)] hover:shadow-[0_0_30px_rgba(99,102,241,0.5)]">
-                <Play size={18} fill="currentColor" /> Run AutoML Engine
+                <Play size={18} fill="currentColor" /> Run Preprocessing & Train
               </button>
             </div>
           </div>
@@ -305,20 +327,19 @@ export default function App() {
       <div className="min-h-screen flex flex-col items-center pt-16 px-4 pb-24">
         <Toaster position="bottom-center" toastOptions={{ style: { background: '#1a1a1a', color: '#f5f5f5', border: '1px solid #2a2a2a' } }} />
         <div className="w-full max-w-6xl">
-
+          
           <div className="flex items-center justify-between mb-8 pb-4 border-b border-border-subtle">
             <h2 className="text-2xl font-bold flex items-center gap-2">KyD<span className="text-accent-primary">.ai</span><span className="text-text-muted font-normal text-xl mx-2">/</span><span className="text-text-secondary font-medium text-xl">{sessionData.filename}</span></h2>
             <div className="flex items-center gap-2 text-sm text-text-muted font-mono tracking-wider"><span className="text-accent-primary">1. EDA</span> — 2. SETUP — 3. TRAIN — 4. EXPORT</div>
           </div>
 
-          {/* UPGRADE 3: AI Smart Insights Banner */}
           {sessionData.eda.smart_insights && sessionData.eda.smart_insights.length > 0 && (
             <div className="mb-8 p-4 rounded-xl border border-accent-primary/30 bg-accent-primary/5 flex flex-col gap-3 shadow-inner">
-              <h3 className="text-accent-primary font-semibold flex items-center gap-2 text-sm uppercase tracking-wider"><Lightbulb size={16} /> AI Feature Engineering Insights</h3>
+              <h3 className="text-accent-primary font-semibold flex items-center gap-2 text-sm uppercase tracking-wider"><Lightbulb size={16}/> AI Feature Engineering Insights</h3>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 {sessionData.eda.smart_insights.map((insight: any, idx: number) => (
                   <div key={idx} className={`p-3 rounded-lg border flex items-start gap-3 bg-background-surface ${insight.type === 'danger' ? 'border-red-500/50 text-red-100' : insight.type === 'warning' ? 'border-amber-500/50 text-amber-100' : 'border-indigo-500/50 text-indigo-100'}`}>
-                    {insight.type === 'danger' ? <AlertTriangle size={18} className="text-red-400 mt-0.5 shrink-0" /> : insight.type === 'warning' ? <AlertTriangle size={18} className="text-amber-400 mt-0.5 shrink-0" /> : <CheckCircle2 size={18} className="text-indigo-400 mt-0.5 shrink-0" />}
+                    {insight.type === 'danger' ? <AlertTriangle size={18} className="text-red-400 mt-0.5 shrink-0"/> : insight.type === 'warning' ? <AlertTriangle size={18} className="text-amber-400 mt-0.5 shrink-0"/> : <CheckCircle2 size={18} className="text-indigo-400 mt-0.5 shrink-0"/>}
                     <p className="text-sm leading-relaxed">{insight.message}</p>
                   </div>
                 ))}
@@ -326,20 +347,19 @@ export default function App() {
             </div>
           )}
 
-          {/* Banner */}
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
             <div className="p-6 rounded-xl border border-border-subtle bg-background-surface flex flex-col gap-1">
-              <span className="text-text-muted text-sm font-medium flex items-center gap-2"><Database size={16} /> Dataset Size</span>
+              <span className="text-text-muted text-sm font-medium flex items-center gap-2"><Database size={16}/> Dataset Size</span>
               <span className="text-2xl font-bold font-mono">{sessionData.rows.toLocaleString()} <span className="text-sm font-sans text-text-secondary font-normal">rows</span></span>
               <span className="text-text-muted text-xs mt-1">{sessionData.columns} cols • {sessionData.memory_mb.toFixed(2)} MB</span>
             </div>
             <div className="p-6 rounded-xl border border-border-subtle bg-background-surface flex flex-col gap-1">
-              <span className="text-text-muted text-sm font-medium flex items-center gap-2"><Activity size={16} /> Data Issues</span>
+              <span className="text-text-muted text-sm font-medium flex items-center gap-2"><Activity size={16}/> Data Issues</span>
               <span className="text-2xl font-bold font-mono text-accent-warning">{sessionData.eda.missing_summary.length} <span className="text-sm font-sans text-text-secondary font-normal">missing cols</span></span>
               <span className="text-text-muted text-xs mt-1">{sessionData.eda.duplicate_count} duplicate rows</span>
             </div>
             <div className="p-6 rounded-xl border border-accent-success/30 bg-accent-success/5 flex flex-col gap-1 relative overflow-hidden md:col-span-2">
-              <span className="text-text-muted text-sm font-medium flex items-center gap-2 z-10"><Activity size={16} /> Health Score</span>
+              <span className="text-text-muted text-sm font-medium flex items-center gap-2 z-10"><Activity size={16}/> Health Score</span>
               <div className="flex items-baseline gap-2 z-10">
                 <span className={`text-4xl font-bold font-mono ${sessionData.health_score > 70 ? 'text-accent-success' : sessionData.health_score > 40 ? 'text-accent-warning' : 'text-red-500'}`}>{sessionData.health_score}</span>
                 <span className="text-text-secondary">/100</span>
@@ -348,15 +368,14 @@ export default function App() {
             </div>
           </div>
 
-          {/* UPGRADE 2: Bivariate Target Selector */}
           <div className="mb-8 p-6 rounded-xl border border-indigo-500/30 bg-indigo-500/5 flex flex-col md:flex-row items-center justify-between gap-4">
             <div>
-              <h3 className="text-lg font-medium flex items-center gap-2 text-indigo-400"><SplitSquareVertical size={18} /> Target Variable Analysis</h3>
+              <h3 className="text-lg font-medium flex items-center gap-2 text-indigo-400"><SplitSquareVertical size={18}/> Target Variable Analysis</h3>
               <p className="text-sm text-text-secondary mt-1">Select your predictive target to unlock stacked Bivariate analysis across all features.</p>
             </div>
             <div className="flex items-center gap-3 w-full md:w-auto">
               {isFetchingBivariate && <Loader2 size={18} className="animate-spin text-accent-primary" />}
-              <select
+              <select 
                 className="w-full md:w-64 p-3 rounded-lg bg-background-surface border border-indigo-500/30 text-text-primary focus:border-accent-primary outline-none"
                 value={edaTarget}
                 onChange={(e) => handleEdaTargetSelect(e.target.value)}
@@ -367,11 +386,10 @@ export default function App() {
             </div>
           </div>
 
-          {/* Missing Data Action Center */}
           {sessionData.eda.missing_summary.length > 0 && (
             <div className="mb-8 p-6 rounded-xl border border-accent-warning/30 bg-background-surface">
-              <h3 className="text-lg font-medium mb-4 flex items-center gap-2 text-accent-warning"><SearchX size={18} /> Missing Data Action Center</h3>
-
+              <h3 className="text-lg font-medium mb-4 flex items-center gap-2 text-accent-warning"><SearchX size={18}/> Missing Data Action Center</h3>
+              
               <div className="w-full rounded-lg border border-border-subtle overflow-hidden">
                 <table className="w-full text-left border-collapse bg-background-primary">
                   <thead>
@@ -389,7 +407,7 @@ export default function App() {
                         <td className="p-4 font-mono text-accent-warning">{col.missing_pct}%</td>
                         <td className="p-4 text-sm text-text-muted">{col.dtype}</td>
                         <td className="p-4">
-                          <select
+                          <select 
                             className="w-full p-2 rounded-md bg-background-surface border border-border-subtle text-sm focus:border-accent-primary outline-none"
                             value={imputationStrategy[col.column] || ''}
                             onChange={(e) => handleImputationChange(col.column, e.target.value)}
@@ -418,12 +436,9 @@ export default function App() {
             </div>
           )}
 
-          {/* Distributions Grid (Dynamic Bivariate Support) */}
-          <h3 className="text-lg font-medium mb-4 flex items-center gap-2"><FileSpreadsheet size={18} className="text-accent-primary" /> Column Distributions</h3>
+          <h3 className="text-lg font-medium mb-4 flex items-center gap-2"><FileSpreadsheet size={18} className="text-accent-primary"/> Column Distributions</h3>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-8">
             {sessionData.eda.column_stats?.map((col: any) => {
-
-              // Dynamic Chart selection based on Bivariate API state
               const isTargetCol = edaTarget === col.name;
               const hasBivariate = bivariateData && bivariateData.data[col.name];
               const chartData = hasBivariate ? bivariateData.data[col.name] : col.chart_data;
@@ -437,22 +452,21 @@ export default function App() {
                       </h4>
                       <span className="text-xs text-text-muted px-2 py-0.5 bg-background-primary rounded border border-border-subtle">{col.dtype}</span>
                     </div>
-                    {col.missing > 0 && <span className="text-xs text-accent-warning flex items-center gap-1"><AlertTriangle size={12} /> {col.missing} nulls</span>}
+                    {col.missing > 0 && <span className="text-xs text-accent-warning flex items-center gap-1"><AlertTriangle size={12}/> {col.missing} nulls</span>}
                   </div>
 
                   <div className="h-32 w-full mb-4 opacity-80 group-hover:opacity-100 transition-opacity">
-                    <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={1}>                      <BarChart data={chartData}>
-                      <RechartsTooltip contentStyle={{ backgroundColor: '#1a1a1a', border: '1px solid #3a3a3a', borderRadius: '8px', fontSize: '12px' }} cursor={{ fill: '#2a2a2a' }} />
-                      {hasBivariate ? (
-                        // Bivariate Stacked Bars
-                        bivariateData.target_classes.map((tClass: string, idx: number) => (
-                          <Bar key={tClass} dataKey={tClass} stackId="a" fill={CHART_COLORS[idx % CHART_COLORS.length]} radius={idx === bivariateData.target_classes.length - 1 ? [2, 2, 0, 0] : [0, 0, 0, 0]} />
-                        ))
-                      ) : (
-                        // Standard Univariate Histogram
-                        <Bar dataKey="count" fill={isTargetCol ? "#3b82f6" : "#6366f1"} radius={[2, 2, 0, 0]} />
-                      )}
-                    </BarChart>
+                    <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={1}>
+                      <BarChart data={chartData}>
+                        <RechartsTooltip contentStyle={{ backgroundColor: '#1a1a1a', border: '1px solid #3a3a3a', borderRadius: '8px', fontSize: '12px' }} cursor={{ fill: '#2a2a2a' }} />
+                        {hasBivariate ? (
+                          bivariateData.target_classes.map((tClass: string, idx: number) => (
+                            <Bar key={tClass} dataKey={tClass} stackId="a" fill={CHART_COLORS[idx % CHART_COLORS.length]} radius={idx === bivariateData.target_classes.length - 1 ? [2, 2, 0, 0] : [0,0,0,0]} />
+                          ))
+                        ) : (
+                          <Bar dataKey="count" fill={isTargetCol ? "#3b82f6" : "#6366f1"} radius={[2, 2, 0, 0]} />
+                        )}
+                      </BarChart>
                     </ResponsiveContainer>
                   </div>
 
@@ -465,7 +479,7 @@ export default function App() {
                         <div><span className="text-text-muted">Max:</span> {col.max ?? '---'}</div>
                         <div><span className="text-text-muted">Kurtosis:</span> {col.kurtosis ?? '---'}</div>
                         <div className="flex items-center gap-1">
-                          <span className="text-text-muted">Skew:</span>
+                          <span className="text-text-muted">Skew:</span> 
                           <span className={col.skewness && Math.abs(col.skewness) > 1 ? 'text-accent-warning font-bold' : ''}>
                             {col.skewness ?? '---'} {col.skewness && Math.abs(col.skewness) > 1 && '⚠️'}
                           </span>
@@ -480,18 +494,17 @@ export default function App() {
             })}
           </div>
 
-          {/* Correlation Matrix */}
           {sessionData.eda.correlation_matrix?.columns && sessionData.eda.correlation_matrix.columns.length > 0 && (
             <div className="mb-8">
-              <h3 className="text-lg font-medium mb-4 flex items-center gap-2"><Network size={18} className="text-accent-primary" /> Feature Correlation Matrix</h3>
+              <h3 className="text-lg font-medium mb-4 flex items-center gap-2"><Network size={18} className="text-accent-primary"/> Feature Correlation Matrix</h3>
               <div className="p-6 rounded-xl border border-border-subtle bg-background-surface overflow-x-auto">
                 <div className="flex items-start justify-between mb-4">
                   <p className="text-sm text-text-secondary">
                     Visual map of linear relationships. <span className="text-indigo-400 font-medium">Blue = Positive</span>, <span className="text-red-400 font-medium">Red = Negative</span>.
                   </p>
-                  <p className="text-xs text-accent-warning flex items-center gap-1"><Info size={14} /> Highlighted cells (|r| &gt; 0.85) indicate potential multi-collinearity.</p>
+                  <p className="text-xs text-accent-warning flex items-center gap-1"><Info size={14}/> Highlighted cells (|r| &gt; 0.85) indicate potential multi-collinearity.</p>
                 </div>
-
+                
                 <div className="inline-block min-w-full">
                   <table className="border-collapse text-xs font-mono">
                     <thead>
@@ -513,8 +526,8 @@ export default function App() {
                           {row.map((val: number, j: number) => {
                             const isHighlyCorrelated = Math.abs(val) > 0.85 && i !== j;
                             return (
-                              <td
-                                key={`cell-${i}-${j}`}
+                              <td 
+                                key={`cell-${i}-${j}`} 
                                 title={`${sessionData.eda.correlation_matrix.columns[i]} ↔ ${sessionData.eda.correlation_matrix.columns[j]}: r = ${val.toFixed(2)}`}
                                 className={`w-12 h-12 p-0 text-center relative group cursor-crosshair
                                   ${isHighlyCorrelated ? 'border-2 border-accent-warning z-10 shadow-[0_0_10px_rgba(245,158,11,0.5)]' : 'border border-border-subtle'}
@@ -559,7 +572,7 @@ export default function App() {
         <p className="text-text-secondary text-lg">Upload your dataset to get started.</p>
       </div>
 
-      <div
+      <div 
         className={`w-full max-w-2xl p-12 border-2 border-dashed rounded-xl flex flex-col items-center justify-center transition-all duration-200 ease-in-out bg-background-surface
           ${isDragging && !isUploading ? 'border-accent-primary bg-background-elevated' : ''}
           ${!isUploading ? 'border-border-subtle hover:border-border-active hover:bg-background-elevated cursor-pointer' : 'border-border-subtle opacity-80 cursor-not-allowed'}
@@ -572,7 +585,7 @@ export default function App() {
         </div>
         <h3 className="text-xl font-medium mb-2">{isUploading ? 'Uploading & Analyzing...' : isDragging ? 'Drop CSV here...' : 'Drag & Drop your CSV file'}</h3>
         <p className="text-text-muted mb-6">{isUploading ? 'Please wait while we crunch the numbers' : 'or click to browse files'}</p>
-
+        
         {!isUploading && (
           <div className="flex items-center gap-2 text-sm text-text-secondary">
             <FileSpreadsheet size={16} /><span>Supports: .csv • Max size: 500MB</span>
